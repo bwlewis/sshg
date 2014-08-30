@@ -1,0 +1,81 @@
+.TH SSHG 1 "March 12th, 2005" "Rocketcalc LLC"
+.SH NAME
+sshg \- SSH/Group: Secure shell for multiple targets
+.SH SYNOPSIS
+\fBsshg\fP  [\fIoptions\fR] [\fI[user@]host1[,]\fR] [\fI[user@]host2][,]\fR] ... "\fIcommand string\fR"
+.SH DESCRIPTION
+Send the command string to the list of hosts using the ssh command. The host 
+list
+can be a list of individual node host names or I.P. addresses. 
+The command string is evaluated in parallel. The standard input stream is
+replicated and redirected to each ssh command. Standard output and error 
+streams
+are returned and displayed from each process. The output can be optionally
+labeled and saved.
+.SH OPTIONS
+.TP
+-a
+Send the command string to all nodes. This option requires Gangalia gmond.
+.TP
+-c \fIcmd\fR
+Use \fIcmd\fR in place of ssh.
+.TP
+-f
+Fork each ssh process to the background and return immediately. 
+NOTE: Redirected stdin is not available to the shells when this option is
+specified.
+.TP
+-h
+Display this help.
+.TP
+-l \fIuser\fR
+Send the ssh commands with the user name \fIuser\fR.
+.TP
+-n \fIfile\fR
+Use the list of nodes in \fRfile\fR. The list may contain node host
+names, I.P. addresses, or MPI-style (MPICH and/or LAM-MPI) node listings.
+.TP
+-o \fIoption\fR
+Append the supplied SSH option to the ssh command. Any valid SSH option
+can be specified here. Multiple -o options can be specified.
+.TP
+-p \fIprefix\fR
+Prepend the prefix to saved output files (see the -s option). Setting
+this option additionally implies the -s option.
+.TP
+-s
+Save the stdout/stderr streams from each shell process to output files.
+The output files will be named \fIprefix\fR<node>.<pid>, where \fIprefix\fR
+is set by the -p option, <node> is the node host name, and <pid> is the
+Process id of the calling sshg command.
+.TP
+-q
+Be quiet (suppress printing of messages and output labels).
+.TP
+-u \fIuser\fR
+Send the command as the specified \fIuser\fR (same as -l).
+.TP
+-v
+Display the sshg version number.
+.TP
+-X
+Enable X11 forwarding. Equivalent to -oForwardX11.
+.TP
+--debug
+Display debugging information for the sshg command but don't invoke ssh.
+.TP
+--list
+Summarized defined cluster groups and exit (Rocketcalc clusters only).
+.TP
+--fork
+Fork the ssh commands to the background (same as -f).
+.SH AUTHOR
+Written by B. Wayne Lewis, Rocketcalc LLC.
+.SH COPYRIGHT
+Copyright (C) 2002 Rocketcalc, LLC. This is free software--see the source
+for copying conditions and discalaimer.
+.SH SEE ALSO
+.TP 
+\fBssh\fR(1)
+.TP 
+\fBscpg\fR(1)

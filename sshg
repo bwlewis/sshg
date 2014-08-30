@@ -1,0 +1,407 @@
+#!/bin/bash
+# sshg: Secure shell group command
+# The secure shell group command provides a simple way to issue commands
+# to groups of host nodes (for example, nodes in a cluster).
+#
+# XXX TODO:
+# * Add a signal handler to trap CTRL+C and other signals and clean up
+#   before exiting.
+#
+# April '08: Restored gmond, ditched cluster_nodes, nodes can now be comma or
+#            space delimited.
+# July 22, 2005: Significant update to use Ganglia to determine cluster
+# node information. The notion of groups will be switched over to "Grids"
+# in the next version.
+# Mach 12, 2005: fixed a bug in the -n option (changed build_nodes to expand)
+# -Also fixed code to allow for repeated node entries
+# -Added user@node parsing (of limited use)
+# Number 9: January, 2005--major revision
+# -Now replicating stdin to all clients via tee and fifos :)
+# -Added support for generic node list file
+# -Added output line labels (they can be turned off)
+# -Added option for saving output to files
+# Number 8: February, 2004
+# Number 7: January, 2004
+# -Corrected a bug in --list
+# Number 6: November, 2003
+# -Added default quotes around commands
+# -Added --list option
+# Release 5: September, 2003
+# -Added support for the fork option (-f) and the user (-l) option
+# Number 4: August, 2003
+# -Support for new machine file format (Motor 4)
+# -Note: We maintain compatability with older Motor machine file format. 
+# Number 3: February 4th, 2003
+# -Now ignores entries with the telemetry=no flag
+# Number 2: December 10th, 2002
+# 1: April 13th, 2002
+# Authors: B. Wayne Lewis <blewis@rocketcalc.com>,
+# Sami Mkaddem <smkaddem@rocketcalc.com>
+#
+
+# Parse the ganglia gmond metrics; return active back-end nodes
+# Depends on ifconfig to determine local addresses
+parse()
+{
+	localip=$(/sbin/ifconfig 2>/dev/null | sed -n '/^.*inet addr/p' | sed -e "s/.*inet addr://g" | sed -e "s/[[:blank:]].*//g")
+	declare -a name
+	declare -a ip
+	declare -a tn
+	declare -a tmax
+	nodes=
+	j=0
+	while test "$#" -ge 1; do
+		M=${1%=*}
+		D=${1#*=}
+		D=${D//\"/}
+		# "} # fix my vim colors
+		case "$M" in
+		"<HOST")
+			j=$(($j +1))
+			;;
+		"NAME")
+			name[$j]=$D
+			;;
+		"IP")
+			ip[$j]=$D
+			;;
+		"TN")
+			tn[$j]=$D
+			;;
+		"TMAX")
+# include an engineering factor
+			tmax[$j]=$(($D + 10))
+			;;
+		*)
+			;;
+		esac
+		shift
+	done
+# Return only active back-end nodes such that TMAX >= TN
+	k=1
+	while test $k -le $j; do
+		for x in $localip; do
+			if test "$x" = "${ip[$k]}"; then
+# Disqualify ths node
+				tn[$k]=$((${tmax[$k]} + 11))
+			fi
+		done
+		if test ${tn[$k]} -le ${tmax[$k]}; then
+			nodes="${ip[$k]} $nodes"
+			if test -n "$SUMMARIZE"; then
+				echo -e "${name[$k]} \t${ip[$k]}"
+			fi
+		fi
+		k=$(($k + 1))
+	done
+	if test -z "$SUMMARIZE"; then
+	    echo $nodes
+	fi
+}
+
+gmond()
+{
+    echo "$(telnet $GHOST $GPORT 2>/dev/null| sed -n '/<HOST NAME/p')"
+}
+
+split()
+{
+# Split arguments of the form [user@]node[:target] into three parts:
+# LUSER
+# NODE
+# TARGET,
+# allowing for optional user and target parts.
+
+LUSER=`echo $1 | sed -n '/@/p' | sed -e 's/@.*//'`
+if test -z "$LUSER"; then
+  LUSER=$USER
+fi
+TARGET=`echo $1 | sed -n '/:/p' | sed -e 's/.*://'`
+if test -z "$TARGET"; then
+  TARGET="$DEFAULT_TARGET"
+fi
+NODE=`echo $1 | sed -e "s/^$LUSER@//" | sed -e "s%:$TARGET$%%" | sed -e 's/^ *//'`
+}
+
+help()
+{
+cat << EOF
+
+sshg  [options] [[user@]host1] [[user@]host2] ... "command string"
+
+Send the command string to the list of hosts using the ssh command. The list
+can be a list of individual node host names or 'all' for all cluster nodes
+reported by the Ganglia gmond daemon.
+
+The command string is evaluated in parallel. The standard input stream is
+replicated and piped to each ssh command. Standard output and error streams
+are returned and displayed from each process. The output can be optionally
+labeled and saved.
+
+OPTIONS
+-a   	Send the command to all available nodes reported by gmond
+-c cmd 	Use the argument cmd in place of ssh
+-f    	Fork commands to background and return immediately
+     	NOTE: Redirected stdin will not be available to the shells
+-g port Set the Ganglia gmond port (default 8649)
+-h    	Display this help
+-l user	Send the command as the indicated user
+-n file	Use the list of nodes in the specified file
+-o opt 	Append the SSH option
+-p pfx 	Prepend the prefix to saved output files (see -s)
+    	Setting a file prefix implies -s
+-s 	Save stdout/stderr output from each shell
+   	The output files will be named [prefix]<node>.<pid>
+-q 	Be quiet (messages and labels suppressed)
+-u user	Send the command as the indicated user (same as -l)
+-v 	Display version number
+-X  	Enable X11 forwarding
+--debug	Display debugging information but don't do anything
+--list 	Summarize all cluster nodes and exit
+--fork 	Fork to background (same as -f)
+
+EXAMPLES
+echo "hello" | sshg n1 n2 n3 cat
+sshg all "df -h"
+sshg -n nodelist 'echo $HOSTNAME'
+
+EOF
+}
+
+# Main script follows
+GHOST=127.0.0.1
+GPORT=8649
+DEBUG=0
+VERSION="11 (April, 2008)"
+SSH_CMD="ssh"
+SSH_OPTIONS=
+OPTIONS=
+
+USER=`whoami`
+NODES=""
+COMMAND=""
+QUIET=0
+SUMMARY=1
+SUMMARIZE=
+FORK=0
+SAVE=0
+PREFIX=
+
+# Process command line options
+case "$1" in
+    -h)
+	help
+	exit
+	;;
+    --h)
+	help
+	exit
+	;;
+    --help)
+	help
+	exit
+	;;
+    -v)
+	echo -e Version: $VERSION
+	exit
+	;;
+    --ver)
+	echo -e Version: $VERSION
+	exit
+	;;
+    --version)
+	echo -e Version: $VERSION
+	exit
+	;;
+    --list)
+	SUMMARY=0
+	;;
+    *)
+esac
+
+while test "$#" -gt "$SUMMARY";
+do
+  case "$1" in
+    -c)
+	shift
+	SSH_CMD="$1"
+	;;
+    -g)
+	shift
+	GPORT="$1"
+	;;
+    --debug)
+        DEBUG=1
+	;;
+    --list)
+	SUMMARY=0
+	;;
+    -f)
+	FORK=1
+	SSH_OPTIONS="$SSH_OPTIONS -f"
+	;;
+    --fork)
+	FORK=1
+	SSH_OPTIONS="$SSH_OPTIONS -f"
+	;;
+    -q)
+        QUIET=1
+	#SSH_OPTIONS="$SSH_OPTIONS -q"
+	;;
+    -X)
+	SSH_OPTIONS="$SSH_OPTIONS -X"
+	;;
+    -o)
+	shift
+	OPTIONS="$OPTIONS -o$1"
+	;;
+    -l)
+	shift
+	OPTIONS="$OPTIONS -oUser=$1"
+	USER=$1
+	;;
+    -u)
+	shift
+	OPTIONS="$OPTIONS -oUser=$1"
+	USER=$1
+	;;
+    -s)
+	SAVE=1
+	;;
+    -p)
+	shift
+	PREFIX="$1"
+	SAVE=1
+	;;
+    -n)
+	shift
+	NODES=`cat $1 | sed -e "s/:.*//g"`
+	;;
+    -a)
+	# Use all the available nodes
+	NODES=$(parse $(gmond))
+	;;
+   all)
+	# Use all available nodes
+	NODES=$(parse $(gmond))
+	;;
+    *)
+	NODES="$NODES $(echo $1 | sed -e 's/,//')"
+  esac
+  shift
+done
+
+if test "$SUMMARY" -eq "0"; then
+  SUMMARIZE=1
+  parse $(gmond)
+  exit 0
+fi
+
+
+if test "$#" -eq "1"; then
+  COMMAND="$1"
+else
+  help
+  exit
+fi
+
+# Check for data on standard input. Force the fork option if no data
+# is available.
+TTY=`tty > /dev/null 2>&1`
+if test $? -eq 0 -a $FORK -eq 0; then
+  FORK=1
+  SSH_OPTIONS="$SSH_OPTIONS -f"
+fi
+
+if test $QUIET -eq 0;
+then
+  echo "sshg: Secure Shell/Group.   Copyright (c) 2002, Rocketcalc LLC."
+fi
+
+if test $DEBUG -eq 1;
+then
+    echo "SSH_CMD $SSH_CMD"
+    echo "SSH_OPTIONS $SSH_OPTIONS $OPTIONS"
+    echo "NODES $NODES"
+    echo "COMMAND \"$COMMAND\""
+    echo "FORK $FORK"
+
+else
+
+    # Make sure that the node list is non-empty
+    if test -z "$NODES"; then
+	echo "sshg: Error--empty node list."
+	echo
+	exit 1
+    fi
+
+    # Check to see if the fork option is set. If so, fork the ssh processes
+    # and exit immediately. 
+    # Otherwise, assume stdin should be replicated  and wait for the ssh 
+    # processes to complete.
+    if test $FORK -eq 1; then
+    	for NODE in $NODES; do
+	   split $NODE
+	   if test $SAVE -eq 1; then
+	   	ssh $SSH_OPTIONS $OPTIONS $LUSER@$NODE $COMMAND &>"$PREFIX$NODE.$$" 2>&1
+	 	echo "Saving to $PREFIX$NODE.$$"
+	   else
+	     if test $QUIET -eq 0; then
+		LCOMMAND="$COMMAND | /bin/sed = | /bin/sed 'N;s/\n/) /' | /bin/sed -e \"s/^/($NODE-/\""
+	   	ssh $SSH_OPTIONS $OPTIONS $LUSER@$NODE $LCOMMAND
+	     else
+	   	ssh $SSH_OPTIONS $OPTIONS $LUSER@$NODE $COMMAND  
+	     fi
+	   fi
+    	done
+        exit 0
+    fi
+
+# Set up a set of named pipes, one for each node in $NODES
+    T=${TMPDIR-/tmp}
+    FIFO=
+    j=1
+    for x in $NODES; do
+      split $x
+      FIFO="$FIFO $T/$$$NODE$j"
+      j=`expr $j + 1`
+    done
+    umask 077 && rm -rf $FIFO && mkfifo $FIFO  
+#echo "FIFO list is $FIFO"
+
+# Redirect stdin via cat and tee to the fifo(s)
+    cat 2>/dev/null | tee $FIFO >/dev/null 2>/dev/null &
+    TEE=$!
+    CAT=`expr $TEE - 1`
+
+# Process the command (with replicated stdin)
+    JOBS=
+    j=1
+    for x in $NODES; do
+	split $x
+	if test $SAVE -eq 1; then
+		ssh $SSH_OPTIONS $OPTIONS $LUSER@$NODE $COMMAND < "$T/$$$NODE$j" &>"$PREFIX$NODE.$$" 2>&1 &
+	 	echo "Saving to $PREFIX$NODE.$$"
+	else
+	   if test $QUIET -eq 0; then
+# Label output
+		ssh $SSH_OPTIONS $OPTIONS $LUSER@$NODE $COMMAND < "$T/$$$NODE$j" | sed = | sed 'N;s/\n/) /' | sed -e "s/^/($NODE-/" &
+	   else
+		ssh $SSH_OPTIONS $OPTIONS $LUSER@$NODE $COMMAND < "$T/$$$NODE$j" &
+	   fi
+	fi
+	JOBS="$JOBS $!"
+	j=`expr $j + 1`
+    done
+
+     # Wait for all ssh processes to complete
+     for JOB in $JOBS; do
+	wait $JOB 2>/dev/null
+     done
+     # XXX Clean up, delete the FIFO list
+     exec 2<&-	# close stderr
+     kill -9 $CAT 2>/dev/null
+     kill -9 $TEE 2>/dev/null
+     rm -f $FIFO
+
+fi
