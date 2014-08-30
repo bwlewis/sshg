@@ -313,10 +313,6 @@ if test $? -eq 0 -a $FORK -eq 0; then
   SSH_OPTIONS="$SSH_OPTIONS -f"
 fi
 
-if test $QUIET -eq 0;
-then
-  echo "sshg: Secure Shell/Group.   Copyright (c) 2002, Rocketcalc LLC."
-fi
 
 if test $DEBUG -eq 1;
 then
