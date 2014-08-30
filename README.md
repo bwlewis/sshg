@@ -27,7 +27,7 @@ echo "Hello there" | sshg atlas arbitrage "cat"
 
 That last example is really useful for copying files in parallel to many nodes.
 For example, let's say we want to copy a directory called 'test' to the /tmp
-director on several nodes. We can redirect the output of tar:
+directory on several nodes. We can redirect the output of tar:
 
 ```
 mkdir test
